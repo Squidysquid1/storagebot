@@ -1,6 +1,6 @@
 const mineflayer = require('mineflayer');
 const creds = require('./credentials.js');
-const { pathfinder, Movements, goals: { GoalGetToBlock } } = require('mineflayer-pathfinder')
+const { pathfinder, Movements, goals: { GoalNear } } = require('mineflayer-pathfinder')
 const { Vec3 } = require('vec3');
 
 
@@ -21,14 +21,18 @@ bot.on('chat', (username, message) => {
     }
 })
 
+
 function sayItems(items = bot.inventory.items()) {
     const output = items.map(itemToString).join(', ')
     if (output) {
-        bot.chat(output)
+        //bot.chat(output);
+        console.log("[Storage Bot] " + output);
     } else {
-        bot.chat('empty')
+        //bot.chat('empty');
+        console.log("[Storage Bot] empty");
     }
 }
+
 
 //x y z
 // north: right - x, left - x-1
@@ -62,6 +66,7 @@ function getPairedChest(block) {
     return null;
 }
 
+
 function containsVec3(arr, needle){
     if(arr.length == 0){
         return false;
@@ -74,6 +79,9 @@ function containsVec3(arr, needle){
     return false;
 }
 
+
+// Gets up to 64 chests within a 15 block radius
+// Returns an array of chests.[[single chest], [left chest,right chest]]
 function getChests() {
     let chests = [];
     let blocks = ['chest', 'trapped_chest'];
@@ -86,64 +94,97 @@ function getChests() {
     chestPairs = [];
     for (const chestLoc of chestsLoc) {
         let block = bot.blockAt(chestLoc);
+        const type = block.getProperties().type;
 
-        if (block.type == 'single') {
-            chests.push(block);
+        if (type == 'single') {
+            chests.push([block]);
         } else {
             chestPair = getPairedChest(block);
 
             if(!containsVec3(chestPairs, chestLoc)){
                 chestPairs.push(chestPair);
-                chests.push(block);
+
+                if(type == "left")
+                    chests.push([block, bot.blockAt(chestPair)]);
+                else if (type == "right")
+                    chests.push([bot.blockAt(chestPair), block]);
+                else 
+                    console.log("[Storage Bot] Invalid blocktype was thrown: " + type);
             }
             
         }
     }
-
+    //console.log(chests);
     return chests;
 }
 
 
 async function indexChest() {
-    const defaultMove = new Movements(bot);
-    let chests = getChests();
-    bot.pathfinder.setMovements(defaultMove)
+    bot.pathfinder.setMovements(makeStrictMove());
 
-    for(const chestToOpen of chests){
-        await bot.pathfinder.goto(new GoalGetToBlock(chestToOpen.position.x, chestToOpen.position.y, chestToOpen.position.z))  
-        let chest = await bot.openContainer(chestToOpen);
+    let chests = getChests();
+    for(const chestToOpen of chests) {
+        let i = 0; // selects left chest to start
+        let x = chestToOpen[i].position.x;
+        let y = chestToOpen[i].position.y;
+        let z = chestToOpen[i].position.z;
+        try {
+            console.log(`[Storage Bot] Traveling to (${x}, ${y}, ${z})`);
+            await bot.pathfinder.goto(new GoalNear(x, y, z, 2));
+        } catch (error) {
+            // switch to right chest
+            if (chestToOpen.length > 1) {
+                i += 1;
+                x = chestToOpen[i].position.x;
+                y = chestToOpen[i].position.y;
+                z = chestToOpen[i].position.z;
+
+                console.log(`[Storage Bot] Error now traveling to (${x}, ${y}, ${z})`);
+                await bot.pathfinder.goto(new GoalNear(x, y, z, 2));
+            }else {
+                console.log(`[Storage Bot] Error traveling to (${x}, ${y}, ${z}) SKIPPING`);
+            }
+            
+        }
+        
+        let chest = await bot.openContainer(chestToOpen[i]);
         sayItems(chest.containerItems());
         chest.close();
     }
-
-
 }
 
+// returns Movement
+function makeStrictMove(){
+    const strictMove = new Movements(bot);
+    strictMove.canDig = false;
+    strictMove.allow1by1towers = false;
+    return strictMove;
+}
 
 function itemToString(item) {
     if (item) {
-        return `${item.name} x ${item.count}`
+        return `${item.name} x ${item.count}`;
     } else {
-        return '(nothing)'
+        return '(nothing)';
     }
 }
 
 function itemByType(items, type) {
-    let item
-    let i
+    let item;
+    let i;
     for (i = 0; i < items.length; ++i) {
-        item = items[i]
-        if (item && item.type === type) return item
+        item = items[i];
+        if (item && item.type === type) return item;
     }
-    return null
+    return null;
 }
 
 function itemByName(items, name) {
-    let item
-    let i
+    let item;
+    let i;
     for (i = 0; i < items.length; ++i) {
-        item = items[i]
-        if (item && item.name === name) return item
+        item = items[i];
+        if (item && item.name === name) return item;
     }
-    return null
+    return null;
 }
