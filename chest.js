@@ -14,15 +14,14 @@ bot.on('chat', (username, message) => {
         case /^list$/.test(message):
             sayItems()
             break
-        case /^chest$/.test(message):
+        case /^index$/.test(message):
             indexChest()
             break
-
     }
 })
 
 
-function sayItems(items = bot.inventory.items()) {
+function sayItems (items = bot.inventory.items()) {
     const output = items.map(itemToString).join(', ')
     if (output) {
         //bot.chat(output);
@@ -39,7 +38,7 @@ function sayItems(items = bot.inventory.items()) {
 // south: right - x, left - x+1
 // east:  right - z, left - z-1
 // west:  right - z, left - z+1
-function getPairedChest(block) {
+function getPairedChest (block) {
     const facing = block.getProperties().facing;
     const type = block.getProperties().type;
     const x = block.position.x;
@@ -67,7 +66,7 @@ function getPairedChest(block) {
 }
 
 
-function containsVec3(arr, needle){
+function containsVec3 (arr, needle){
     if(arr.length == 0){
         return false;
     }
@@ -80,8 +79,32 @@ function containsVec3(arr, needle){
 }
 
 
+function formatChestPair (block) {
+    const type = block.getProperties().type;
+
+    if (type == 'single') {
+        return [block];
+    } else {
+        chestPair = getPairedChest(block);
+
+        if(!containsVec3(chestPairs, block.position)){
+            chestPairs.push(chestPair);
+
+            if(type == "left")
+                return [block, bot.blockAt(chestPair)];
+            else if (type == "right")
+                return [bot.blockAt(chestPair), block];
+            else 
+                console.log("[Storage Bot] Invalid blocktype was thrown: " + type);
+        }
+    }
+    return null;
+}
+
+
 // Gets up to 64 chests within a 15 block radius
 // Returns an array of chests.[[single chest], [left chest,right chest]]
+// the first item will always be the last found trapped chest, which will be the interacting chest
 function getChests() {
     let chests = [];
     let blocks = ['chest', 'trapped_chest'];
@@ -91,27 +114,21 @@ function getChests() {
         count: 64
     });
 
+    chests.push(null);
+
     chestPairs = [];
     for (const chestLoc of chestsLoc) {
         let block = bot.blockAt(chestLoc);
-        const type = block.getProperties().type;
 
-        if (type == 'single') {
-            chests.push([block]);
-        } else {
-            chestPair = getPairedChest(block);
-
-            if(!containsVec3(chestPairs, chestLoc)){
-                chestPairs.push(chestPair);
-
-                if(type == "left")
-                    chests.push([block, bot.blockAt(chestPair)]);
-                else if (type == "right")
-                    chests.push([bot.blockAt(chestPair), block]);
-                else 
-                    console.log("[Storage Bot] Invalid blocktype was thrown: " + type);
+        let chestPair = formatChestPair(block);
+        if(chestPair != null) {
+            switch(block.name){
+                case "chest":
+                    chests.push(chestPair);
+                    break;
+                case "trapped_chest":
+                    chests[0] = chestPair;
             }
-            
         }
     }
     //console.log(chests);
@@ -119,39 +136,103 @@ function getChests() {
 }
 
 
-async function indexChest() {
+// chest [leftblock, rightblock] or [single]
+async function moveToChest(chestToOpen){
     bot.pathfinder.setMovements(makeStrictMove());
+
+    let i = 0; // selects left chest to start
+    let x = chestToOpen[i].position.x;
+    let y = chestToOpen[i].position.y;
+    let z = chestToOpen[i].position.z;
+    try {
+        //console.log(`[Storage Bot] Traveling to (${x}, ${y}, ${z})`);
+        await bot.pathfinder.goto(new GoalNear(x, y, z, 2));
+    } catch (error) {
+        // switch to right chest
+        if (chestToOpen.length > 1) {
+            i += 1;
+            x = chestToOpen[i].position.x;
+            y = chestToOpen[i].position.y;
+            z = chestToOpen[i].position.z;
+
+            //console.log(`[Storage Bot] Error now traveling to (${x}, ${y}, ${z})`);
+            await bot.pathfinder.goto(new GoalNear(x, y, z, 2));
+        }else {
+            console.log(`[Storage Bot] Error traveling to (${x}, ${y}, ${z}) SKIPPING`);
+            return false;
+        }
+    }
+    return true;
+}
+
+
+async function indexChest() {
+    const itemLocations = new Map();
 
     let chests = getChests();
     for(const chestToOpen of chests) {
-        let i = 0; // selects left chest to start
-        let x = chestToOpen[i].position.x;
-        let y = chestToOpen[i].position.y;
-        let z = chestToOpen[i].position.z;
-        try {
-            console.log(`[Storage Bot] Traveling to (${x}, ${y}, ${z})`);
-            await bot.pathfinder.goto(new GoalNear(x, y, z, 2));
-        } catch (error) {
-            // switch to right chest
-            if (chestToOpen.length > 1) {
-                i += 1;
-                x = chestToOpen[i].position.x;
-                y = chestToOpen[i].position.y;
-                z = chestToOpen[i].position.z;
-
-                console.log(`[Storage Bot] Error now traveling to (${x}, ${y}, ${z})`);
-                await bot.pathfinder.goto(new GoalNear(x, y, z, 2));
-            }else {
-                console.log(`[Storage Bot] Error traveling to (${x}, ${y}, ${z}) SKIPPING`);
-            }
-            
-        }
+        await moveToChest(chestToOpen);
         
-        let chest = await bot.openContainer(chestToOpen[i]);
-        sayItems(chest.containerItems());
+        let chest = await bot.openContainer(chestToOpen[0]);
+
+        for(const item of chest.containerItems()) {
+            let locationToAdd = {   "chests":    chestToOpen,
+                                    "stackSize": item.stackSize,
+                                    "count":     item.count,
+                                    "slot":      item.slot
+                                };
+            if(itemLocations.has(item.name)){
+                itemLocations.get(item.name).push(locationToAdd);
+            }else {
+                itemLocations.set(item.name, [locationToAdd]);
+            }
+        }
         chest.close();
     }
+    watchChest(chests, itemLocations);
 }
+
+
+async function watchChest (chests, itemLocations) {
+    
+    await moveToChest(chests[0]);
+    const chest = await bot.openContainer(chests[0][0]);
+
+    chest.on('updateSlot', (slot, oldItem, newItem) => {
+      bot.chat(`chest update: ${itemToString(oldItem)} -> ${itemToString(newItem)} (slot: ${slot})`)
+    })
+
+  
+    bot.on('chat', onChat)
+  
+    function onChat (username, message) {
+      if (username === bot.username) return
+      const command = message.split(' ')
+      switch (true) {
+
+        case /^store$/.test(message):
+          storeItems();
+          break;
+        case /^get \d+ \w+$/.test(message):
+          // deposit amount name
+          // ex: get 16 stick
+          getItem(command[2], command[1]);
+          break;
+      }
+    }
+
+
+    async function getItem (name, amount) {
+      
+    }
+  
+
+    // get all items in chest 
+    async function storeItems () {
+      
+    }
+  }
+
 
 // returns Movement
 function makeStrictMove(){
@@ -161,6 +242,7 @@ function makeStrictMove(){
     return strictMove;
 }
 
+
 function itemToString(item) {
     if (item) {
         return `${item.name} x ${item.count}`;
@@ -168,6 +250,7 @@ function itemToString(item) {
         return '(nothing)';
     }
 }
+
 
 function itemByType(items, type) {
     let item;
@@ -178,6 +261,7 @@ function itemByType(items, type) {
     }
     return null;
 }
+
 
 function itemByName(items, name) {
     let item;
