@@ -21,6 +21,10 @@ bot.on('chat', (username, message) => {
 })
 
 
+/**
+ * Prints all Items to the console
+ * @param {Item[]} items - An array of items
+ */
 function sayItems (items = bot.inventory.items()) {
     const output = items.map(itemToString).join(', ')
     if (output) {
@@ -38,6 +42,11 @@ function sayItems (items = bot.inventory.items()) {
 // south: right - x, left - x+1
 // east:  right - z, left - z-1
 // west:  right - z, left - z+1
+/**
+ * Gets the the paired chests location for connected chests
+ * @param {Block} block - a block object of a chest
+ * @returns {Vec3} - chest pair position
+ */
 function getPairedChest (block) {
     const facing = block.getProperties().facing;
     const type = block.getProperties().type;
@@ -66,6 +75,12 @@ function getPairedChest (block) {
 }
 
 
+/**
+ * checks if an array contains a vec3 for a coordinate.
+ * @param {Vec3[]} arr - array to compare to
+ * @param {Vec3} needle - vec3 to look for
+ * @returns {boolean} - true if the array contains. False otherwise.
+ */
 function containsVec3 (arr, needle){
     if(arr.length == 0){
         return false;
@@ -79,6 +94,11 @@ function containsVec3 (arr, needle){
 }
 
 
+/**
+ * Formats a chest into [L,R] or [Chest] or null
+ * @param {Block} block - chest to format
+ * @returns {Block[]} - returns an array of blocks or block. and null if cant
+ */
 function formatChestPair (block) {
     const type = block.getProperties().type;
 
@@ -170,21 +190,26 @@ async function indexChest() {
     const itemLocations = new Map();
 
     let chests = getChests();
-    for(const chestToOpen of chests) {
-        await moveToChest(chestToOpen);
+    for(let i = 1; i < chests.length; i++){
+        await moveToChest(chests[i]);
         
-        let chest = await bot.openContainer(chestToOpen[0]);
+        let chest = await bot.openContainer(chests[i][0]);
 
         for(const item of chest.containerItems()) {
-            let locationToAdd = {   "chests":    chestToOpen,
-                                    "stackSize": item.stackSize,
-                                    "count":     item.count,
-                                    "slot":      item.slot
-                                };
+            let itemLocobj;
+
             if(itemLocations.has(item.name)){
-                itemLocations.get(item.name).push(locationToAdd);
+                itemLocobj = itemLocations.get(item.name);
+                itemLocobj.chests.push(i);
+                itemLocobj.counts.push(item.count);
+                itemLocobj.slots.push(item.slot);
+                
             }else {
-                itemLocations.set(item.name, [locationToAdd]);
+                itemLocations.set(item.name, {  "chests":     [i],
+                                                "counts":     [item.count],
+                                                "slots":      [item.slot],
+                                                "stackSize":   item.stackSize,
+                                                "type":        item.type});
             }
         }
         chest.close();
@@ -199,10 +224,9 @@ async function watchChest (chests, itemLocations) {
     const chest = await bot.openContainer(chests[0][0]);
 
     chest.on('updateSlot', (slot, oldItem, newItem) => {
-      bot.chat(`chest update: ${itemToString(oldItem)} -> ${itemToString(newItem)} (slot: ${slot})`)
+      console.log(`[Storage Bot] chest update: ${itemToString(oldItem)} -> ${itemToString(newItem)} (slot: ${slot})`)
     })
 
-  
     bot.on('chat', onChat)
   
     function onChat (username, message) {
@@ -222,14 +246,19 @@ async function watchChest (chests, itemLocations) {
     }
 
 
+    // TODO: finish
     async function getItem (name, amount) {
-      
+        let itemlocation = itemLocations.get(name);
+        // move to first chest withdraw the amount
+        // if the amount of items in chest is >= amount then either take the whole stack or partial and update item loctions
+        // else move to next chest and repeat process above
     }
   
 
-    // get all items in chest 
+    // store items
+    // TODO: Plan and finish
     async function storeItems () {
-      
+        bot.inventory.items()
     }
   }
 
